@@ -1,19 +1,61 @@
+import { db } from '../db';
+import { conversationsTable, usersTable } from '../db/schema';
 import { type CreateConversationInput, type Conversation } from '../schema';
+import { eq, or, and } from 'drizzle-orm';
 
-export async function createConversation(input: CreateConversationInput): Promise<Conversation> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is:
-  // 1. Check if conversation already exists between these two users
-  // 2. If exists, return existing conversation
-  // 3. If not, create new conversation record in database
-  // 4. Ensure user1_id and user2_id are different (can't chat with yourself)
-  // 5. Return the conversation record
-  
-  return Promise.resolve({
-    id: 1, // Placeholder ID
-    user1_id: input.user1_id,
-    user2_id: input.user2_id,
-    created_at: new Date(),
-    updated_at: new Date()
-  } as Conversation);
-}
+export const createConversation = async (input: CreateConversationInput): Promise<Conversation> => {
+  try {
+    // Ensure user can't chat with themselves
+    if (input.user1_id === input.user2_id) {
+      throw new Error('Cannot create conversation with yourself');
+    }
+
+    // Verify both users exist
+    const users = await db.select()
+      .from(usersTable)
+      .where(or(
+        eq(usersTable.id, input.user1_id),
+        eq(usersTable.id, input.user2_id)
+      ))
+      .execute();
+
+    if (users.length !== 2) {
+      throw new Error('One or both users do not exist');
+    }
+
+    // Check if conversation already exists between these two users
+    // Conversation can exist in either direction (user1->user2 or user2->user1)
+    const existingConversation = await db.select()
+      .from(conversationsTable)
+      .where(or(
+        and(
+          eq(conversationsTable.user1_id, input.user1_id),
+          eq(conversationsTable.user2_id, input.user2_id)
+        ),
+        and(
+          eq(conversationsTable.user1_id, input.user2_id),
+          eq(conversationsTable.user2_id, input.user1_id)
+        )
+      ))
+      .execute();
+
+    // If conversation exists, return it
+    if (existingConversation.length > 0) {
+      return existingConversation[0];
+    }
+
+    // Create new conversation
+    const result = await db.insert(conversationsTable)
+      .values({
+        user1_id: input.user1_id,
+        user2_id: input.user2_id
+      })
+      .returning()
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('Conversation creation failed:', error);
+    throw error;
+  }
+};
